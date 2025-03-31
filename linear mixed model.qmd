@@ -1,0 +1,664 @@
+---
+title: "Linear Mixed Model"
+author: "Dr Hazlienor Mohd Hatta"
+date: "15-April 2024"
+format:
+  html:
+    prefer-html: true
+    toc: true
+    toc-location: left
+    toc-depth: 4
+    toc-expand: 2
+    toc-title: Contents
+    code-links:
+      text: Github repo
+      icon: "file-code"
+      href: https://github.com/drhazlienor/mixedmodel.git
+      smooth-scroll: true
+    theme:
+      light: journal
+      dark:
+      - journal
+      - "theme-dark.scss"
+    grid:
+      sidebar-width: 300px
+      margin-width: 300px
+      body-width: 900px
+self-contained: true
+resource_files:
+- Linear mixed model.html
+---
+
+# Introduction
+
+## Problem
+
+Carbapenems are often considered the last line of defense against multidrug-resistant (MDR) bacterial infections, particularly in hospitalized patients. The increasing reliance on carbapenem therapy has raised concerns about prolonged hospital stays, higher healthcare costs, and the potential for further antimicrobial resistance. Several factors, including patient demographics, disease severity, type of therapy, and hospital-specific practices, may influence the length of hospital stay among patients receiving carbapenems.
+
+## Research Question
+
+What are the factors that influence the length of hospital stay of patients receiving carbapenem therapy for multidrug-resistant infections in northern Peninsular Malaysia?
+
+## Objective
+
+1.  To examine the factors influencing length of hospital stay among patients receiving carbapenem therapy for multidrug-resistant infections in northern Peninsular Malaysia.
+
+# Description of Data set
+
+The dataset comprises **651 patient** records from **34 hospitals** in the northern region of Peninsular Malaysia, focusing on patients receiving carbapenem therapy for multidrug-resistant infections. It includes both individual-level and hospital-level factors.
+
+Key outcome variables include:
+
+-   Length of hospital stay (day) – A continuous variable ranging from 3 to 60 days, where shorter stays indicate better outcomes.
+
+-   Survival status at discharge (status) – A binary variable where 1 = Alive and 0 = Dead.
+
+**Patient-Level (Inter-Individual) Variables**
+
+| Variable Name | Description | Data Type | Possible Values / Range |
+|------------------|------------------|------------------|------------------|
+| patient_id | Unique identifier for each patient | Integer | 1 to 651 |
+| hospital_id | Identifies the hospital where the patient was treated | Integer | 1 to 34 (corresponding to different hospitals) |
+| age | Patient’s age | Integer | 18 to 89 years |
+| eGFR | Estimated Glomerular Filtration Rate, indicating kidney function | Continuous | 15 to 120 mL/min/1.73m² |
+| SOFA | Sequential Organ Failure Assessment score, measures severity of illness | Integer | 0 to 15 (higher values indicate greater severity) |
+| therapy | Type of antibiotic therapy received | Categorical | *Monotherapy* or *Combination Therapy* |
+
+**Hospital-Level (Inter-Hospital) Variables**
+
+| Variable Name | Description | Data Type | Possible Values / Range |
+|------------------|------------------|------------------|------------------|
+| day | Number of days the patient was hospitalized | Continuous | 1 to 20 days (shorter stays indicate better outcomes) |
+| status | Survival status at discharge | Binary | 1 = Alive, 0 = Dead |
+
+# Workflow
+
+1.  Prepare environment
+
+2.  Load data
+
+3.  Data exploration and wrangling
+
+4.  Descriptive analysis
+
+5.  Univariate analysis
+
+6.  Multilevel analysis
+
+    -   estimate
+
+    -   inference
+
+    -   prediction
+
+7.  Data presentation and interpretation
+
+# Analysis
+
+## Prepare Environment
+
+**Install required packages**
+
+```{r}
+# install.packages(c("readxl", "tidyverse", "lme4", "lmerTest", "gtsummary", "sjPlot", "lattice"), dependencies = TRUE)
+```
+
+**Load required packages**
+
+```{r}
+library(readxl) # read xlsx data set
+library(tidyverse) # data manipulation, visualization, and wrangling
+library(lme4) # fitting linear mixed-effects models
+library(lmerTest) # providing p-values for fixed effects
+library(gtsummary) # summarizing model results
+library(broom.mixed) #tidy, summarize mixed models
+library(sjPlot) # visualizing and summarizing mixed-effects model results
+library(lattice) # visualizing mixed-effects model results
+```
+
+## Load Data
+
+```{r}
+carba <-read_xlsx("carbapenem.xlsx")
+```
+
+## Data Exploration & Wrangling
+
+Examine the structure of the data
+
+```{r}
+str(carba)
+```
+
+Convert all character variables into factors, and label categorical variables such as `status` (0 = Dead, 1 = Alive) appropriately to ensure that the data is correctly recognized as categorical for modeling and visualization
+
+```{r}
+carba <- carba %>%
+  mutate(
+    across(where(is.character), as.factor),  # Convert character variables to factors
+    status = factor(status, levels = c(0, 1), labels = c("Dead", "Alive"))  # Convert numeric status to labeled factor
+  )
+```
+
+## Descriptive analysis
+
+**Overall distribution**
+
+Summarize the distribution of the data
+
+```{r}
+summary(carba)
+```
+
+Tabulate the characteristic of the patient
+
+```{r}
+tbl_summary(carba)
+```
+
+provide mean, sd and set decimal point
+
+```{r}
+carba %>% 
+  select(-patient_id, -hospital_id) %>% # remove unwanted variable
+  tbl_summary(
+    statistic = list(all_continuous() ~ "{mean} ({sd})",  # Mean (SD) for numeric variables
+                     all_categorical() ~ "{n} ({p}%)"),  # Count (percentage) for categorical variables
+    digits = list(
+      all_continuous() ~ 1,  # 1 decimal place for numeric variables
+      all_categorical() ~ 1  # 1 decimal place for percentages
+    ),
+    label = list(
+      day ~ "Length of Stay (days)",
+      age ~ "Age (years)",
+      local_resistance_rate ~ "Resistance Rate", 
+      hospital_type ~ "Hospital Type"
+    )
+  )
+```
+
+**Distribution by hospital**
+
+average length of stay by hospital
+
+```{r}
+carba %>% group_by(hospital_id) %>%
+  summarise(
+    count = n(),
+    mean = mean(day, na.rm=TRUE),
+    sd = sd(day, na.rm=TRUE)
+  )
+```
+
+Visualize the length of stay (day), by hospitals (hospital_id)
+
+```{r}
+carba %>%
+  ggplot(aes(x = hospital_id, y = day)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  scale_x_continuous(breaks = unique(carba$hospital_id), labels = unique(carba$hospital_id))
+```
+
+Visualize the length of stay (day), by hospitals (hospital_id) and patient factor
+
+```{r}
+carba %>%
+  ggplot(aes(x = hospital_id, y = day, col = therapy, group = therapy)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  scale_x_continuous(breaks = unique(carba$hospital_id), labels = unique(carba$hospital_id))
+
+```
+
+Visualize the length of stay (day), by hospitals (hospital_id) and hospital factor
+
+```{r}
+carba %>%
+  ggplot(aes(x = hospital_id, y = day, col = hospital_type, group = hospital_type)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  scale_x_continuous(breaks = unique(carba$hospital_id), labels = unique(carba$hospital_id))
+
+```
+
+## Unilevel Analysis
+
+Lets do simple and multiple linear regression to unders
+
+### **Simple linear regression**
+
+univariable analysis for all predictors available on the dataset.
+
+```{r}
+carba %>%
+  tbl_uvregression(
+    method = lm,  # Linear regression
+    y = day,      # Outcome variable
+    include = -c(patient_id, hospital_id, status) # Exclude unwanted variables
+  )
+```
+
+### **Multiple linear regression**
+
+lets select a few variable to be included in the model (age, SOFA, therapy)
+
+```{r}
+mlr <- lm(day ~ age + SOFA + therapy, data = carba)
+summary(mlr)
+```
+
+summarize the model in table
+
+```{r}
+tbl_regression(mlr)
+```
+
+For each 1-year increase in age, the expected increase in the length of hospital stay is 0.03 days (95% CI: 0.02, 0.05; p-value \<0.001), when adjusted for SOFA score and therapy type.
+
+Each 1-point increase in the SOFA score is associated with an increase of 0.24 days in the outcome (95% CI: 0.20, 0.29; p-value \<0.001), when adjusted for age and therapy type.
+
+Patients who received monotherapy had an increase of 1.3 days in the outcome compared to those on combination therapy (95% CI: 0.91, 1.6, \<0.001), when adjusted for age and SOFA score.
+
+**Age has a meaningful association with the length of hospital stay, higher severity of illness (SOFA score) is linked to a longer hospital stay, monotherapy may lead to longer hospital stays compared to combination therapy.**
+
+## Multilevel Analysis
+
+### Motivation
+
+-   Patients receiving treatment at the same hospital are more likely to have similar outcomes due to **shared hospital-specific factors** such as treatment protocols, resource availability, and healthcare staff expertise.
+
+-   Standard linear regression assumes **independence of observations** which is violated when data is **clustered** within hospital.
+
+-   Standard regression assumes **homoscedasticity** (constant variance), but in reality, hospitals may exhibit **different levels of variability** in patient outcomes.
+
+### **Single predictor**
+
+A **random intercept effect** means that we assume each group (e.g., hospital) has its own baseline level (intercept), but the effect of the predictors (slopes) remains the same across groups.
+
+#### **Constant only model**
+
+The model estimates the **overall average length of stay (LOS)** across all hospitals. No predictor variables are included, meaning it assumes LOS is the same for all patients except for hospital-level differences.
+
+```{r}
+cmodel <- lmer(day ~ 1 + (1 | hospital_id), data = carba, REML = FALSE)
+summary(cmodel)
+```
+
+The model suggests that the **average hospital stay is 6.5 days**. There is **moderate variation between hospitals (SD = 1.4 days)**, meaning some hospitals have longer or shorter LOS due to hospital differences.
+
+The **residual variation (SD = 2.2 days)** shows that LOS varies significantly within hospitals due to patient-level factors.
+
+#### **Random intercept effect**
+
+We would like to examine the fixed effect of SOFA score on the LOS while also **controlling for the random effect of hospital (intercept)**, assuming that **hospitals** have different baseline effects on **length of stay (days)** but the effect of SOFA score remains the same across hospitals.
+
+```{r}
+model_SOFA_ri <- lmer(day ~ SOFA + (1 | hospital_id), data = carba, REML = FALSE)
+summary(model_SOFA_ri)
+```
+
+summarize model
+
+```{r}
+tab_model(model_SOFA_ri)
+```
+
+**Interpretation**
+
+**Fixed effect:**
+
+-   Intercept: The estimated baseline length of stay (LOS) is about 4.67 days when age = 0 (p \<0.001)
+
+-   SOFA score: 1 unit increase in SOFA score is associated with a 0.25-day (95% CI: 0.21, 0.29; p\<0.001) increase in length of stay, when adjusted for random effect of hospital.
+
+**Random Effects (Hospital-Level Variability):**
+
+-   **Hospital Intercept Variance = 1.97**→ The average difference in LOS **between hospitals.**
+
+    -   The **variance in LOS due to differences between hospitals** is **1.97 days²**. Hospitals **differ, on average, by about** **√1.97 = 1.4 days** in their baseline LOS.
+
+-   **Residual Variance = 3.78** → The remaining unexplained variation **within hospitals**.The **variance in LOS within hospitals (patient-level differences)** is **3.78 days²**. After accounting for **hospital differences and patient's SOFA score**, the LOS still varies **within each hospital** by **√3.78 = 1.9 days** on average.
+
+-   The **Intraclass Correlation Coefficient (ICC)** tells us how much of the total variance in **length of stay (LOS)** is explained by **hospital-level** differences. It is calculated as:
+
+![](images/clipboard-1127938702.png){fig-align="center" width="257"}
+
+```{r}
+1.967/(1.967+3.779)
+```
+
+-   About **34.2% of the total variability** in **length of stay (LOS)** is due to differences **between hospitals**.
+
+-   The remaining **65.8% of the variability** is due to **individual patient SOFA score differences within hospitals** and other unexplained factors not included in the model.
+
+-   Hospital-level factors have effect on LOS, however major variation is explained by patient-specific factors rather than hospital-level differences.
+
+**Moderate Negative Correlation between predictor and intercept (-0.507)**
+
+-   In hospitals where the baseline LOS (intercept) is higher, the effect of SOFA score on the number of days tends to be smaller, and vice versa.
+
+-   Imagine two hospitals with different intercept values:
+
+    1.  Hospital A: On average, patients in Hospital A start with a baseline of 7.5 days when the SOFA score is 0. For this hospital, the change in LOS due to a unit increase in SOFA (0.24681) is not as pronounced.
+
+    2.  Hospital B: On average, patients in Hospital B start with a baseline of 3.0 days when the SOFA score is 0. For this hospital, the effect of SOFA on LOS will be **higher** than in Hospital A, meaning that for each one-unit increase in SOFA, the number of days increases more significantly.
+
+#### Random slope effect
+
+A **random slope effect** means that the relationship between a **predictor** variable (e.g., SOFA) and the **outcome** variable (e.g., length of stay (LOS)) **varies across groups** (e.g., hospitals).
+
+**Random intercept with single random slope model**
+
+Instead of assuming a single fixed effect for all hospitals, this model allows each hospital to have its **own unique slope** for SOFA score. Each hospital can have **a different baseline LOS** **and** a **different effect of SOFA** on LOS, for example, due to:
+
+-   different thresholds for treating patients with high SOFA scores. E.g., one hospital may discharge patients earlier if their SOFA score improves, while another might keep patients for longer periods.
+
+-   Different hospitals may treat different types of patients. E.g., a hospital that primarily treats critical care patients might see a stronger relationship between SOFA and LOS, as severe cases typically require longer stays.
+
+-   Some hospitals may have better resources. A well-resourced hospital might manage patients with higher SOFA scores more efficiently.
+
+We would want to estimate the **fixed effect of risk factors (SOFA score)** on the LOS while also **controlling for the random effect of SOFA score (slope) and hospital (intercept)**
+
+```{r}
+model_SOFA_rs <- lmer(day ~ SOFA + (1 + SOFA| hospital_id), data = carba, REML = FALSE)
+summary(model_SOFA_rs)
+```
+
+summarize the model
+
+```{r}
+tab_model(model_SOFA_rs)
+```
+
+**Interpretation:**
+
+**Fixed effect:**
+
+-   Each 1-unit increase in SOFA is associated with a 0.25-day (95% CI: 0.21, 0.29; p \<0.001) increase in LOS when adjusted for random effect of hospital and random effect of SOFA score.
+
+**Random effect:**
+
+-   Intercept Variance (1.68 days², SD=1.29 days): Some hospitals have longer average LOS than others.
+
+-   Random Slope (0.0001808 variance): The effect of SOFA score on LOS barely varies across hospitals (almost 0).
+
+-   Correlation between intercept & slope (-0.436): Hospitals with higher baseline LOS tend to show a weaker effect of SOFA score.
+
+#### Model comparison
+
+hence, which model is better? lets compare the model using anova test
+
+```{r}
+anova(cmodel, model_SOFA_ri, model_SOFA_rs )
+```
+
+**Log-likelihood** improves when adding age (**-1449.5 → -1381.3**). **Adding SOFA (model_SOFA_ri) significantly improves the model** (*p \<0.001*).
+
+**Lower AIC/BIC is better** → The **model_SOFA_ri** (random intercept only) has the lowest AIC (2801.7), indicating a **better fit** than the other two. **Adding a random slope (model_SOFA_rs) does NOT improve the model** (*p = 0.8164*), indicating that SOFA score affects LOS similarly across hospitals.
+
+**conclusion?**
+
+✅ **SOFA score has significant effect on LOS.**\
+✅ **Hospitals differ in baseline LOS, but SOFA score effects barely vary between hospitals.**
+
+### Multiple predictors
+
+Lets examine how **patient characteristics** (age, severity based on SOFA score) and **treatment** **factor** (type pf therapy) influence LOS while accounting for **variability between hospitals.**
+
+-   **Age**: Older patients may have longer LOS due to **weakened immune response, comorbidities, or slower recovery rates**.
+
+-   **SOFA Score**: The **Sequential Organ Failure Assessment (SOFA)** score reflects **disease severity**. Higher scores suggest **worse clinical conditions**, which may prolong LOS.
+
+-   **Therapy Type**: Patients receiving **monotherapy vs. combination therapy** may experience different LOS due to **treatment effectiveness or resistance patterns.**
+
+#### Random intercept model
+
+```{r}
+model_ast_ri <- lmer(day ~ age + SOFA + therapy + (1 | hospital_id), data = carba, REML = FALSE)
+summary(model_ast_ri)
+```
+
+```{r}
+tab_model(model_ast_ri)
+```
+
+**Key interpretation:**
+
+-   Age: No significant association between age and LOS.
+
+-   SOFA Score : Higher disease severity significantly leads to a longer LOS.
+
+-   Therapy Type : Patients on monotherapy tend to have a longer LOS compared to those on combination therapy.
+
+-   Random effect (hospital variance = 1.78, SD=1.34 days): There is variation in LOS between hospitals.
+
+#### Random intercept model with single random slope
+
+Lets asssess how **age, SOFA** score, and **therapy** type influence the LOS among patients receiving carbapenem for MDR infections while allowing **therapy effects to vary by hospital**.
+
+```{r}
+model_ast_rs <- lmer(day ~ age + SOFA + therapy + (1 + therapy| hospital_id), data = carba, REML = FALSE)
+summary(model_ast_rs)
+```
+
+**Key interpretation**
+
+-   Age is not significantly affecting LOS.
+
+-   Higher SOFA score significantly increase LOS.
+
+-   Monotherapy is associated with a significantly longer LOS than combination therapy.
+
+-   Variance in hospital intercepts (1.429) indicates that baseline LOS differs across hospitals.
+
+-   Variance in therapy slopes (1.079) suggests that the impact of therapy on LOS varies by hospital.
+
+#### Model comparison
+
+which model is better?
+
+```{r}
+anova(model_ast_ri, model_ast_rs)
+```
+
+**model_ast_rs** (random intercept + random slope for therapy) provides a **significantly better fit** to the data than **model_ast_ri** (random intercept only). The improvement is statistically significant (**p \< 0.001**), meaning that including the random slope for **therapy** accounts for more variability in **hospital stay duration** across hospitals. The residual variance also reduce upon addition of random slope, thi suggests that allowing the slope of variable to vary between clusters captures more of the data's structure.
+
+Lets calculate the ICC for the **model_ast_ri:**
+
+```{r}
+1.429/(1.429+3.079)
+```
+
+About **31.7%** of the variability in the **LOS** (day) is attributable to differences between hospitals, while the remaining **68.3%** is due to within-hospital variability not explained by the model (residuals).
+
+#### **Preliminary Final Model**
+
+We select the model with lower AIC/BIC and improved log-likelihood as the preliminary final model: **model_ast_rs.**
+
+Lets check the model fitness:
+
+```{r}
+plot(model_ast_rs)
+```
+
+```{r}
+qqmath(model_ast_rs)
+```
+
+### Final model
+
+The model can be written as:
+
+![](images/clipboard-3341618963.png){fig-align="center"}
+
+#### Estimate
+
+Lets recall the fixed effect estimates from the model:
+
+```{r}
+tbl_regression(model_ast_rs)
+```
+
+#### Inference
+
+or obtain the estimates and confidence interval for each predictors using broom.mixed
+
+```{r}
+install.packages("broom.mixed")
+```
+
+```{r}
+library(broom.mixed)
+```
+
+```{r}
+tidy(model_ast_rs, conf.int=TRUE)
+```
+
+extract the random effect for each hospital site
+
+```{r}
+ra.eff.rs <- ranef(model_ast_rs, condVar = TRUE)
+ra.eff.rs
+```
+
+### Prediction
+
+lets predict the LOS for each observation
+
+```{r}
+rs_ast <- augment(model_ast_rs)
+head(rs_ast, 10)
+```
+
+### Interpretation and visualization
+
+**Summarize the result in table**
+
+```{r}
+tab_model(model_ast_rs)
+```
+
+**Fixed effect interpretation:**
+
+For each unit increase in SOFA score, the length of hospital stay increase by 0.24 days (95% CI: 0.20, 0.28, p-value \<0.001), when adjusted for age, therapy type, random effect of hospital, and random effect of therapy type.
+
+Compared to combined therapy, receiving monotherapy increase the length of hospital stay by 1.28 days (95% CI: 0.83, 1.73, p \<0.001) when adjusted for age, SOFA score, random effect of hospital, and random effect of therapy type.
+
+For each year increase in age, the length of hospital stay increase by 0.009 days (95% CI: -0.01, 0.01, p-value = 0.397), when adjusted for SOFA score, therapy type, random effect of hospital, and random effect of therapy type, although the association is not significant.
+
+**Random effect interpretation:**
+
+The analysis demonstrated variability in the association between therapy type and length of hospital stay on patient with MDR infection receiving carbapenem across different hospitals (random intercept variance = 1.429 days**²,** sd = 1.195 days).
+
+The weak correlation(0.07) between the random intercepts and random slopes suggests that hospitals with a longer baseline length of hospital stay do not necessarily show a stronger or weaker effect of monotherapy.
+
+About 31.7% of the variability in the length of hospital stay is due to differences between hospital. The remaining 68% (residual variance (3.079, sd = 1.755) reflects the unexplained variation in length of hospital stay after accounting for both fixed and random effects. This suggests that other unmeasured factors, such as patient characteristics, treatment protocols, or hospital resources, likely influence length of hospital stay.
+
+**Visualization**
+
+Plot the random slope vs random intercept
+
+```{r}
+plot(ra.eff.rs)
+```
+
+or, you can use ggplot2 and add labels to the dots
+
+```{r}
+
+# Extract random effects according to hospital
+ran.int <- ranef(model_ast_rs)$hospital_id  
+
+# Assign hospital id
+ran.int_df <- as.data.frame(ran.int)
+ran.int_df$hospital_id <- rownames(ran.int_df) 
+
+# Rename columns for plotting
+colnames(ran.int_df) <- c("Intercept", "therapyMonotherapy", "Hospital_ID")
+
+# Create plot
+ggplot(ran.int_df, aes(x = therapyMonotherapy, y = Intercept, label = Hospital_ID)) +
+  geom_point() +
+  geom_text(aes(label = Hospital_ID), vjust = -1, hjust = 0.5, size = 3) + 
+  labs(x = "Monotherapy Effect (Random Slope)", y = "Baseline LOS (Random Intercept)") +
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) +
+  theme_minimal()
+
+
+```
+
+**Y-Axis (Intercepts)**: This represents the baseline variation in LOS across hospitals.
+
+**X-Axis (Slopes for Monotherapy Effect)**: This shows how monotherapy affects LOS differently across hospitals.
+
+-   **Upper-right quadrant (high intercept, positive slope):** These hospitals start with a high LOS and monotherapy worsens it. Investigate why monotherapy is less effective and consider combination therapy.
+
+-   **Upper-left quadrant (high intercept, negative slope):** These hospitals have high baseline LOS, but monotherapy reduces LOS. Preserve monotherapy as an effective strategy.
+
+-   **Lower-right quadrant (low intercept, positive slope):** These hospitals have low baseline LOS, but monotherapy increases LOS. Reassess the appropriateness of monotherapy.
+
+-   **Lower-left quadrant (low intercept, negative slope):** These hospitals have low baseline LOS and monotherapy further reduces LOS. These hospitals are well-optimized; monitor but no major changes needed.
+
+Plot the random slope and random intercept
+
+```{r}
+rs_ast %>%
+  ggplot(aes(therapy, .fitted, group = hospital_id)) +  
+  geom_point(alpha = 0.3) +
+  geom_line(aes(colour = hospital_id), alpha = 0.3) +
+  ylab('The fitted LOS') +
+  xlab('therapy type') +
+  theme_bw()
+```
+
+The majority of lines **slope** **upward**, suggesting that LOS tends to be longer for patients on monotherapy compared to combination therapy across many hospitals.
+
+Some hospitals show a **steeper increase** in LOS when switching from combination therapy to monotherapy, while others have a smaller change. A few hospitals even show a slight **decrease** in LOS with monotherapy.
+
+Lines **differ in direction and steepness**, it supports the finding from the mixed-effects model that the effect of monotherapy on LOS **varies** across hospitals.
+
+```{r}
+randoms <- ranef(model_ast_rs, condVar = TRUE)
+dotplot(randoms)
+```
+
+**Random intercept:**
+
+-   x-axis represent the baseline deviation
+
+-   Hospitals with random intercepts above 0 have a **higher baseline LOS** compared to the average hospital.
+
+-   Hospitals with negative random intercepts have a **lower baseline LOS** compared to the average.
+
+**Random slope:**
+
+-   This shows how the effect of **monotherapy** (compared to the combined therapy) varies across hospitals.
+
+-   A positive value means **monotherapy increases LOS** for that hospital.
+
+-   A negative value means **monotherapy decreases LOS** for that hospital.
+
+**What do you observe from the analysis?**
+
+**Some hospitals have consistently higher baseline LOS**. Are there delays in diagnostics, resource constraints, or different discharge policies? Identify hospitals with shorter baseline LOS and investigate their strategies. Best practices from these hospitals could be adopted.
+
+**The effect of monotherapy varies by hospital.** In some hospitals, it increases LOS, while in others, it has a negative or little effect. Reassess monotherapy use in hospitals with positive random slopes. Conduct local antibiograms to check for resistance rate and patterns. Expand combination therapy if necessary.
+
+**Hospital-level differences** suggest systemic factors affecting LOS and therapy effectiveness. Instead of applying a uniform policy, allow flexibility based on local conditions.
+
+**Explore Additional Factors Affecting LOS**. Future analyses could include patient severity, comorbidities, and socioeconomic status to determine whether therapy type is the main driver of LOS or if other confounding factors are at play.
+
+## Conclusion
+
+-   A standard regression model assumes the same treatment effect applies to all hospitals. However, real-world healthcare settings differ in structure, patient population, and treatment efficiency.
+
+-   Multilevel analysis is crucial in this study because it accounts for the hierarchical structure of the data, where patients are nested within hospitals.
+
+-   Traditional regression models assume independence of observations, but in reality, patients treated in the same hospital share similar treatment protocols, healthcare resources, and clinical practices.
+
+-   Ignoring this within-hospital correlation could lead to biased estimates and incorrect conclusions.
+
+-    Understanding hospital-specific variations helps policymakers tailor interventions rather than applying a one-size-fits-all approach.
