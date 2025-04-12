@@ -99,8 +99,10 @@ Key outcome variables include:
 
 **Install required packages**
 
+(remove the \# when you want to run this code)
+
 ```{r}
-# install.packages(c("readxl", "tidyverse", "lme4", "lmerTest", "gtsummary", "sjPlot", "lattice"), dependencies = TRUE)
+# install.packages(c("readxl", "tidyverse", "lme4", "lmerTest", "gtsummary", "sjPlot", "lattice", "DHARMa"), dependencies = TRUE)
 ```
 
 **Load required packages**
@@ -114,6 +116,7 @@ library(gtsummary) # summarizing model results
 library(broom.mixed) #tidy, summarize mixed models
 library(sjPlot) # visualizing and summarizing mixed-effects model results
 library(lattice) # visualizing mixed-effects model results
+library(DHARMa) # checking residual diagnostics for hierarchical regression models
 ```
 
 ## Load Data
@@ -129,6 +132,14 @@ Examine the structure of the data
 ```{r}
 str(carba)
 ```
+
+**Variables:**
+
+**data**: carba
+
+**independent variable**: age, eGFR, SOFA, therapy, hospital_type, local_resistance_rate
+
+**outcome variable**: day, status
 
 Convert all character variables into factors, and label categorical variables such as `status` (0 = Dead, 1 = Alive) appropriately to ensure that the data is correctly recognized as categorical for modeling and visualization
 
@@ -177,6 +188,12 @@ carba %>%
   )
 ```
 
+**Distribution of outcome (length of stay)**
+
+```{r}
+hist(carba$day)
+```
+
 **Distribution by hospital**
 
 average length of stay by hospital
@@ -198,6 +215,17 @@ carba %>%
   geom_point() +
   geom_smooth(method = lm) +
   scale_x_continuous(breaks = unique(carba$hospital_id), labels = unique(carba$hospital_id))
+```
+
+```{r}
+boxplot(day ~ hospital_id, data = carba)
+```
+
+```{r}
+(colour_plot <- ggplot(carba, aes(x = SOFA, y = day, colour = hospital_id)) +
+  geom_point(size = 2) +
+  theme_classic() +
+  theme(legend.position = "none"))
 ```
 
 Visualize the length of stay (day), by hospitals (hospital_id) and patient factor
@@ -224,7 +252,7 @@ carba %>%
 
 ## Unilevel Analysis
 
-Lets do simple and multiple linear regression to unders
+Lets do simple and multiple linear regression
 
 ### **Simple linear regression**
 
@@ -464,26 +492,77 @@ anova(model_ast_ri, model_ast_rs)
 
 **model_ast_rs** (random intercept + random slope for therapy) provides a **significantly better fit** to the data than **model_ast_ri** (random intercept only). The improvement is statistically significant (**p \< 0.001**), meaning that including the random slope for **therapy** accounts for more variability in **hospital stay duration** across hospitals. The residual variance also reduce upon addition of random slope, thi suggests that allowing the slope of variable to vary between clusters captures more of the data's structure.
 
-Lets calculate the ICC for the **model_ast_ri:**
+Lets calculate the ICC for the **model_ast_rs:**
 
 ```{r}
 1.429/(1.429+3.079)
 ```
 
-About **31.7%** of the variability in the **LOS** (day) is attributable to differences between hospitals, while the remaining **68.3%** is due to within-hospital variability not explained by the model (residuals).
+About **31.7%** of the variability in the **LOS** (day) is attributable to differences between hospitals (hospital-level clustering).
+
+You can also use the **performance** package if you want to calculate the **R²**
+
+```{r}
+#install.packages("performance")
+```
+
+```{r}
+library(performance)
+r2_nakagawa(model_ast_rs)
+```
+
+-   **Marginal R²**: proportion of variance explained by **fixed effects**
+
+-   **Conditional R²**: proportion of variance explained by **fixed + random effects**
+
+**52.9%** of total variance explained by the **whole model**
 
 #### **Preliminary Final Model**
 
 We select the model with lower AIC/BIC and improved log-likelihood as the preliminary final model: **model_ast_rs.**
 
-Lets check the model fitness:
+lets re-run the final model using REML
 
 ```{r}
-plot(model_ast_rs)
+final_model <- lmer(day ~ age + SOFA + therapy + (1 + therapy| hospital_id), data = carba)
+summary(final_model)
 ```
 
+#### Model Checking
+
+Lets check the model fitness to evaluate if the mixed-effects model is appropriately modeling both **fixed effects** (predictors) and **random effects** (group-level variations).
+
+We can use the package - **DHARMa**: residual diagnostics for hierarchical (multi-level/mixed) regression models
+
 ```{r}
-qqmath(model_ast_rs)
+library(DHARMa)
+sim_res <- simulateResiduals(final_model)
+plot(sim_res)
+
+```
+
+**Kolmogorov–Smirnov test:** check normality of residuals, p-value \< 0.05 suggests model misspecification
+
+**Dispersion test:** check whether model is overdispersed or underdispersed , whether the residual variance matches the model’s expected variance. p-value \< 0.05 suggests significant dispersion
+
+**Outlier test:** Slight deviations from the 45° red line at the tails — supports the test result of mild non-uniformity/outliers
+
+**Residual vs predicted plot:**
+
+-   Homoscedasticity (constant variance) & independence - The residuals are **scattered evenly** across the predicted values — no funnel shape or **pattern/trend**.
+
+-   **Red stars (\*)** mark **potential outliers**. These are simulated residuals that significantly deviate from expected bounds.
+
+-   DHARMa rank-transforms residuals, so 0 to 1 scale is **expected** and helps identify unusual behavior.
+
+```{r}
+testDispersion(final_model)
+```
+
+or you can use **sjplot** package to plot the diagnostic
+
+```{r}
+plot_model(final_model, type = 'diag')
 ```
 
 ### Final model
@@ -497,30 +576,39 @@ The model can be written as:
 Lets recall the fixed effect estimates from the model:
 
 ```{r}
-tbl_regression(model_ast_rs)
+tbl_regression(final_model)
 ```
 
 #### Inference
 
-or obtain the estimates and confidence interval for each predictors using broom.mixed
+or obtain the estimates and confidence interval for each predictors using broom.mixed (remove the \# when you want to run this code)
 
 ```{r}
-install.packages("broom.mixed")
+#install.packages("broom.mixed")
 ```
 
 ```{r}
 library(broom.mixed)
 ```
 
+95% CI for the fixed effect estimates
+
 ```{r}
-tidy(model_ast_rs, conf.int=TRUE)
+tidy(final_model, conf.int=TRUE)
 ```
 
 extract the random effect for each hospital site
 
 ```{r}
-ra.eff.rs <- ranef(model_ast_rs, condVar = TRUE)
-ra.eff.rs
+ra.eff.fm <- ranef(final_model, condVar = TRUE)
+ra.eff.fm
+```
+
+95% CI for the random effect
+
+```{r}
+tidy(final_model, effects = 'ran_vals',
+     conf.int = TRUE)
 ```
 
 ### Prediction
@@ -528,8 +616,8 @@ ra.eff.rs
 lets predict the LOS for each observation
 
 ```{r}
-rs_ast <- augment(model_ast_rs)
-head(rs_ast, 10)
+pred_fm <- augment(final_model)
+head(pred_fm, 10)
 ```
 
 ### Interpretation and visualization
@@ -537,7 +625,7 @@ head(rs_ast, 10)
 **Summarize the result in table**
 
 ```{r}
-tab_model(model_ast_rs)
+tab_model(final_model)
 ```
 
 **Fixed effect interpretation:**
@@ -546,22 +634,22 @@ For each unit increase in SOFA score, the length of hospital stay increase by 0.
 
 Compared to combined therapy, receiving monotherapy increase the length of hospital stay by 1.28 days (95% CI: 0.83, 1.73, p \<0.001) when adjusted for age, SOFA score, random effect of hospital, and random effect of therapy type.
 
-For each year increase in age, the length of hospital stay increase by 0.009 days (95% CI: -0.01, 0.01, p-value = 0.397), when adjusted for SOFA score, therapy type, random effect of hospital, and random effect of therapy type, although the association is not significant.
+For each year increase in age, the length of hospital stay increase by 0.009 days (95% CI: -0.01, 0.01, p-value = 0.409), when adjusted for SOFA score, therapy type, random effect of hospital, and random effect of therapy type, although the association is not significant.
 
 **Random effect interpretation:**
 
-The analysis demonstrated variability in the association between therapy type and length of hospital stay on patient with MDR infection receiving carbapenem across different hospitals (random intercept variance = 1.429 days**²,** sd = 1.195 days).
+The analysis demonstrated variability in the association between therapy type and length of hospital stay on patient with MDR infection receiving carbapenem across different hospitals (random intercept variance = 1.48 days**²,** sd = 1.22 days).
 
-The weak correlation(0.07) between the random intercepts and random slopes suggests that hospitals with a longer baseline length of hospital stay do not necessarily show a stronger or weaker effect of monotherapy.
+The weak correlation(0.03) between the random intercepts and random slopes suggests that hospitals with a longer baseline length of hospital stay do not necessarily show a stronger or weaker effect of monotherapy.
 
-About 31.7% of the variability in the length of hospital stay is due to differences between hospital. The remaining 68% (residual variance (3.079, sd = 1.755) reflects the unexplained variation in length of hospital stay after accounting for both fixed and random effects. This suggests that other unmeasured factors, such as patient characteristics, treatment protocols, or hospital resources, likely influence length of hospital stay.
+About 31.7% of the variability in the length of hospital stay is due to differences between hospital. The remaining 68% (residual variance (3.089, sd = 1.758) reflects the unexplained variation in length of hospital stay after accounting for both fixed and random effects. This suggests that other unmeasured factors, such as patient characteristics, treatment protocols, or hospital resources, likely influence length of hospital stay.
 
 **Visualization**
 
 Plot the random slope vs random intercept
 
 ```{r}
-plot(ra.eff.rs)
+plot(ra.eff.fm)
 ```
 
 or, you can use ggplot2 and add labels to the dots
@@ -569,7 +657,7 @@ or, you can use ggplot2 and add labels to the dots
 ```{r}
 
 # Extract random effects according to hospital
-ran.int <- ranef(model_ast_rs)$hospital_id  
+ran.int <- ranef(final_model)$hospital_id  
 
 # Assign hospital id
 ran.int_df <- as.data.frame(ran.int)
@@ -602,10 +690,10 @@ ggplot(ran.int_df, aes(x = therapyMonotherapy, y = Intercept, label = Hospital_I
 
 -   **Lower-left quadrant (low intercept, negative slope):** These hospitals have low baseline LOS and monotherapy further reduces LOS. These hospitals are well-optimized; monitor but no major changes needed.
 
-Plot the random slope and random intercept
+Plot the fitted value and random slope
 
 ```{r}
-rs_ast %>%
+pred_fm %>%
   ggplot(aes(therapy, .fitted, group = hospital_id)) +  
   geom_point(alpha = 0.3) +
   geom_line(aes(colour = hospital_id), alpha = 0.3) +
@@ -614,14 +702,24 @@ rs_ast %>%
   theme_bw()
 ```
 
-The majority of lines **slope** **upward**, suggesting that LOS tends to be longer for patients on monotherapy compared to combination therapy across many hospitals.
+-   The majority of lines **slope** **upward**, suggesting that LOS tends to be longer for patients on monotherapy compared to combination therapy across many hospitals.
 
-Some hospitals show a **steeper increase** in LOS when switching from combination therapy to monotherapy, while others have a smaller change. A few hospitals even show a slight **decrease** in LOS with monotherapy.
+-   Some hospitals show a **steeper increase** in LOS when switching from combination therapy to monotherapy, while others have a smaller change. A few hospitals even show a slight **decrease** in LOS with monotherapy.
 
-Lines **differ in direction and steepness**, it supports the finding from the mixed-effects model that the effect of monotherapy on LOS **varies** across hospitals.
+-   Lines **differ in direction and steepness**, it supports the finding from the mixed-effects model that the effect of monotherapy on LOS **varies** across hospitals.
+
+Lets plot the random effect of intercept and slope
+
+you can use **sjplot** package to do the plot
 
 ```{r}
-randoms <- ranef(model_ast_rs, condVar = TRUE)
+plot_model(final_model, type = "re")
+```
+
+or u can use the **doplot** package
+
+```{r}
+randoms <- ranef(final_model, condVar = TRUE)
 dotplot(randoms)
 ```
 
@@ -661,4 +759,60 @@ dotplot(randoms)
 
 -   Ignoring this within-hospital correlation could lead to biased estimates and incorrect conclusions.
 
--    Understanding hospital-specific variations helps policymakers tailor interventions rather than applying a one-size-fits-all approach.
+-   Understanding hospital-specific variations helps policymakers tailor interventions rather than applying a one-size-fits-all approach.
+
+## Alternative
+
+### GEE model
+
+In GEE, the coefficients still represent the **average change in the dependent variable** for a one-unit change in the predictor, but **with the correlation structure within clusters taken into account**.
+
+The interpretation is still about the **average effect** of the predictors on the outcome, but this effect is estimated while accounting for the **correlation between clustered data points**.
+
+**install package gee**
+
+```{r}
+#install.packages(gee)
+```
+
+**load library**
+
+```{r}
+library(gee)
+```
+
+**run gee model**
+
+```{r}
+gee_model <- gee(day ~ age + SOFA + therapy, 
+                 id = hospital_id, 
+                 data = carba, 
+                 family = gaussian, 
+                 corstr = "exchangeable")
+gee_model
+
+```
+
+On average, **each additional year of age** was associated with a **0.037-day increase** in length of stay, adjusting for SOFA score and therapy type.
+
+**Each one-point increase in SOFA score** was associated with an **average increase of 0.242 days** in hospital stay, adjusting for age and therapy type
+
+Patients receiving **monotherapy** had an **average of 1.215 days longer** hospital stay compared to those receiving the combined therapy, adjusting for SOFA score and age.
+
+The working correlation estimate (ρ ≈ 0.697) indicated a moderate degree of within-hospital clustering - justifying the need for GEE.
+
+**Thank you.**
+
+References:
+
+-   https://stats.oarc.ucla.edu/other/mult-pkg/introduction-to-linear-mixed-models/
+
+-   https://cran.r-project.org/web/packages/lme4/lme4.pdf
+
+-   Jiang, J. and Nguyen, T., 2021. **Linear and generalized linear mixed models and their applications**. Springer Nature.
+
+-   Meteyard, L., & Davies, R. A. (2020). **Best practice guidance for linear mixed-effects models in psychological science**. Journal of Memory and Language, 112, 104092.
+
+-   Silveira LTYD, Ferreira JC, Patino CM. Mixed-effects model: a useful statistical tool for longitudinal and cluster studies. J Bras Pneumol. 2023 May 15;49(2):e20230137. doi: 10.36416/1806-3756/e20230137.
+
+-   Twisk, J.W., 2019. **Applied mixed model analysis: a practical guide**. Cambridge University Press

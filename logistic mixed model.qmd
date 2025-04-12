@@ -1,0 +1,613 @@
+---
+title: "Logistic Mixed Model"
+author: "Dr Hazlienor Mohd Hatta"
+date: "15-April 2024"
+format:
+  html:
+    prefer-html: true
+    toc: true
+    toc-location: left
+    toc-depth: 4
+    toc-expand: 2
+    toc-title: Contents
+    code-links:
+      text: Github repo
+      icon: "file-code"
+      href: https://github.com/drhazlienor/mixedmodel.git
+      smooth-scroll: true
+    theme:
+      light: journal
+      dark:
+      - journal
+      - "theme-dark.scss"
+    grid:
+      sidebar-width: 300px
+      margin-width: 300px
+      body-width: 900px
+self-contained: true
+resource_files:
+- Logistic mixed model.html
+---
+
+## Background
+
+What are the factors associated with post-myocardial infarction (post-MI) mortality among patients admitted to hospitals in XX state?
+
+### Description of the Dataset
+
+The dataset consists of data from 1250 patients who experienced a myocardial infarction (MI) and were recruited from 7 different hospitals within a state. The dataset captures variables, with the goal of identifying risk factors associated with post-MI mortality.
+
+**Risk Factor**
+
+-   **ID:** ID of patient
+
+-   **Hospital:** hospital to which the patient get admitted (1-7). Hospital 1 has no specialist, hospital 2-3 have general medicine specialist, and hospital 4-7 have cardiac specialist.
+
+-   **Age (age):** Continuous variable representing the age of the patient in years.
+
+-   **Sex (sex):** Categorical variable representing the sex of the patient (Female = 0, Male = 1).
+
+-   **Diabetes Status (dm):** Binary variable indicating whether the patient has diabetes (Yes = 1, No = 0).
+
+-   **Underlying Hypertension (hpt):** Binary variable indicating whether the patient has hypertension (Yes = 1, No = 0).
+
+-   **Chronic Kidney Disease (ckd):** Binary variable indicating whether the patient has chronic kidney disease (Yes = 1, No = 0).
+
+-   **Duration of Admission (dur_adm):** Continuous variable representing the length of hospital stay in days.
+
+-   **Type of Treatments received (treatment):** Categorical variable indicating the types of treatments received at each hospital (invasive, noninvasive).
+
+**Outcome variable**
+
+-   **Post-MI Mortality:** Binary variable indicating the survival status of the patient at discharge (alive = 0, dead = 1).
+
+## Workflow
+
+1.  prepare environment
+
+2.  load data
+
+3.  data exploration and wrangling
+
+4.  descriptive analysis
+
+5.  univariate analysis
+
+6.  multilevel analysis
+
+    estimate
+
+    inference
+
+    prediction
+
+7.  data presentation and interpretation
+
+## Prepare environment
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(broom.mixed)
+library(gee)
+library(lme4)
+library(sjPlot)
+library(gtsummary)
+```
+
+## Load data
+
+```{r}
+data <-read_xlsx("mi_mortality.xlsx")
+```
+
+## Data exploration and wrangling
+
+```{r}
+str(data)
+```
+
+```{r}
+data <- data %>% mutate_if(is.character, as.factor)
+data <- data %>% mutate(status = as.factor(status))
+```
+
+```{r}
+summary(data)
+```
+
+visualize hierarchical tree
+
+```{r}
+library(data.tree)
+```
+
+```{r}
+root <- Node$new("Hospitals")
+```
+
+```{r}
+patient_counts <- data %>%
+  group_by(hospital) %>%
+  summarize(patient_count = n())
+```
+
+```{r}
+for(i in 1:nrow(patient_counts)) {
+  hospital_id <- patient_counts$hospital[i]
+  patient_count <- patient_counts$patient_count[i]
+  root$AddChild(paste("Hospital", hospital_id, "- Patients:", patient_count))
+}
+print(root)
+```
+
+## Descriptive and univariate analysis
+
+distribution of risk factors based on post-MI mortality status and across different hospitals
+
+```{r}
+data %>% 
+  select(-ID) %>% 
+  tbl_summary(by = status,
+            statistic = list(all_continuous() ~ "{mean} ({sd})"),
+            digits = age ~ c(1, 1)
+             ) %>% 
+            modify_header(update = list(stat_1 ~ "**Alive**", 
+                                        stat_2 ~ "**Dead**")) %>% 
+            add_overall() %>% 
+            add_p
+```
+
+```{r}
+library(reshape2)
+eda <- melt(data[, c("status", "age", "dur_adm", "hospital")],
+            id.vars = c("status", "hospital"))
+
+
+ggplot(eda, aes(factor(status), y = value, fill = factor(status))) +
+  geom_boxplot() +
+  facet_wrap(~ variable + hospital, scales = "free_y", ncol = 7) +
+  labs(x = "Hospital", y = "post-MI mortality", fill = "Status") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  ggtitle("Distribution of risk factors for post-MI mortality by Hospital")
+```
+
+```{r}
+prop_sex <- data %>%
+  group_by(hospital, sex) %>%
+  summarize(prop_status = mean(as.numeric(status) - 1), .groups = 'drop')
+```
+
+```{r}
+plotsex <- ggplot(prop_sex, aes(x = sex, y = prop_status, group = hospital, color = as.factor(hospital))) + 
+  geom_line(linetype = "solid", color = "black",linewidth = 1, show.legend = FALSE) + 
+  coord_cartesian(ylim = c(0, 0.6)) + 
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), labels = scales::percent_format(accuracy = 1)) + 
+  ylab("% Post-MI mortality") + 
+  xlab("Sex") + 
+   theme_minimal() +
+  theme(legend.title = element_blank())
+```
+
+```{r}
+prop_dm <- data %>%
+  group_by(hospital, dm) %>%
+  summarize(prop_status = mean(as.numeric(status) - 1), .groups = 'drop')
+```
+
+```{r}
+plotdm <- ggplot(prop_sex, aes(x = sex, y = prop_status, group = hospital, color = as.factor(hospital))) + 
+  geom_line(linetype = "solid", color = "black",linewidth = 1, show.legend = FALSE) + 
+  coord_cartesian(ylim = c(0, 0.6)) + 
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), labels = scales::percent_format(accuracy = 1)) + 
+  xlab("Diabetes Mellitus") + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank())
+```
+
+```{r}
+prop_ckd <- data %>%
+  group_by(hospital, ckd) %>%
+  summarize(prop_status = mean(as.numeric(status) - 1), .groups = 'drop')
+```
+
+```{r}
+plotckd <- ggplot(prop_ckd, aes(x = ckd, y = prop_status, group = hospital, color = as.factor(hospital))) + 
+  geom_line(linetype = "solid", color = "black",linewidth = 1, show.legend = FALSE) + 
+  coord_cartesian(ylim = c(0, 0.6)) + 
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), labels = scales::percent_format(accuracy = 1)) + 
+  ylab("% Post-MI mortality") + 
+  xlab("Sex") + 
+   theme_minimal() +
+  theme(legend.title = element_blank())
+```
+
+```{r}
+prop_tx <- data %>%
+  group_by(hospital, treatment) %>%
+  summarize(prop_status = mean(as.numeric(status) - 1), .groups = 'drop')
+```
+
+```{r}
+plottx <- ggplot(prop_tx, aes(x = treatment, y = prop_status, group = hospital, color = as.factor(hospital))) + 
+  geom_line(linetype = "solid", color = "black",linewidth = 1) + 
+  coord_cartesian(ylim = c(0, 0.6)) + 
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), labels = scales::percent_format(accuracy = 1)) + 
+  xlab("type of treatment") + 
+  theme_minimal() +
+  scale_color_brewer(palette="Dark2") +
+  theme(legend.title = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank())
+```
+
+```{r}
+library(gridExtra)
+grid.arrange(plotsex, plotdm, plotckd, plottx, ncol = 2)
+```
+
+## Multivariate analysis (model building)
+
+**Fixed effect and random effect**
+
+Variable included in the model building : independent variable (age, sex, dm, ckd, treatment, dur_adm), outcome variable (status)
+
+\*\* Model building and Estimation\*\*
+
+### Binary logistic regression model
+
+```{r}
+mlog_model <- glm(status ~ age + sex + dm + ckd + treatment + dur_adm, family = binomial(link = 'logit'), data = data)
+summary(mlog_model)
+```
+
+There are one possible sources of correlation between observations in the data - on the study site (hospital).
+
+As subjects (level 1) are clustered within hospital (level 2) it may be necessary to consider a two-level random effects model when analyzing the data.
+
+### Marginal (population average) model
+
+```{r}
+gee_model<- gee(status ~ age + sex +dm + ckd + treatment + dur_adm, id = hospital, 
+                data = data, family = binomial(link = 'logit'), 
+                corstr = "independence", 
+                scale.fix = TRUE, scale.value = 1,
+                maxiter = 100)
+```
+
+summary of estimates
+
+```{r}
+sum_gee_model <- data.frame(log_odds = coef(gee_model), 
+                           odds_ratio = exp(coef(gee_model)))
+sum_gee_model
+```
+
+### Conditional model
+
+#### Random intercept
+
+random intercept (hospital)
+
+```{r}
+ri_lme <- glmer(status ~ age + sex + dm + ckd + treatment + dur_adm +
+                        (1 | hospital), family = binomial, nAGQ = 20, 
+                      data = data)
+summary(ri_lme)
+```
+
+#### Random intercept with single random slope
+
+Estimating the fixed effect of the risk factors while also controlling for random effect of duration of admission (slope) and hospital (intercept)
+
+```{r}
+rs_lme_dur <- glmer(status ~ age + sex + dm + ckd + dur_adm +
+                        (1 + dur_adm| hospital), family = binomial("logit"), data = data, glmerControl(calc.derivs = FALSE))
+summary(rs_lme_dur)
+```
+
+#### Random intercept with multiple random slope
+
+Estimating the fixed effect of the risk factors while controlling for random effect of duration of admission (slope), treatment (slope), and hospital (intercept)
+
+```{r}
+rs_lme_dur_tx <- glmer(status ~ age + sex + dm + ckd + dur_adm + treatment +
+                        (1 + dur_adm + treatment | hospital), family = binomial("logit"), data = data, glmerControl(calc.derivs = FALSE))
+summary(rs_lme_dur_tx)
+```
+
+### Model comparison
+
+We compare the AIC of binary logistic regression to random intercept model, random intercept with single random slope model, and random intercept with multiple random slopes model.
+
+```{r}
+models <- list(mlog_model, ri_lme, rs_lme_dur, rs_lme_dur_tx)
+extract_aic <- function(model) {
+  return(AIC(model))
+}
+aic_values <- sapply(models, extract_aic)
+
+# Name the AIC values for easy identification
+names(aic_values) <- c("mlog", "random intercept", "random intercept single slope", "random intercept multiple slope")
+
+# Print the AIC values
+print(aic_values)
+```
+
+The AIC of random effect model was lower than the binary logistic regression model, hence inclusion of random effect is justified.
+
+compare random intercept to random intercept with single slope
+
+```{r}
+anova(ri_lme, rs_lme_dur, test = 'Chisq')
+```
+
+compare random intercept with single slope to random intercept with multiple slope
+
+```{r}
+anova(rs_lme_dur, rs_lme_dur_tx, test = 'Chisq')
+```
+
+The AIC of random intercept with multiple random slope model was significantly smaller than other random effect model, hence it is selected as the preliminary final model.
+
+#### Estimate
+
+preliminary final model
+
+```{r}
+rs_lme_dur_tx <- glmer(status ~ age + sex + dm + ckd + dur_adm + treatment +
+                        (1 + dur_adm + treatment | hospital), family = binomial("logit"), data = data, glmerControl(calc.derivs = FALSE))
+summary(rs_lme_dur_tx)
+```
+
+#### Inference
+
+##### log odds
+
+```{r}
+tidy(rs_lme_dur_tx, conf.int=T)
+```
+
+##### odds ratio
+
+```{r}
+tidy(rs_lme_dur_tx, exponentiate=T, conf.int=T)
+```
+
+##### random effects
+
+```{r}
+tidy(rs_lme_dur_tx, effects = 'ran_vals',
+     conf.int = TRUE)
+```
+
+#### Prediction
+
+##### level 1: subject
+
+```{r}
+fitted <- augment(rs_lme_dur_tx)
+augment(rs_lme_dur_tx) %>%
+  slice(1:30) %>%
+  kbl() %>%
+  kable_styling()
+```
+
+###### predicted log odds
+
+```{r}
+head(predict(rs_lme_dur_tx, type = 'link'), 10)
+```
+
+log odd (manual) for first observation
+
+```{r}
+data[1,]
+```
+
+fixed effect
+
+```{r}
+fixef(rs_lme_dur_tx)
+```
+
+random effect
+
+```{r}
+head(ranef(rs_lme_dur_tx), 3)
+```
+
+logit(P(Y_ij =1))=β0+β1Ageij +β2Genderij +β3DMij +β4CKDij +β5 treatmentij+β6dur_admij +u0j + u5treatmentij + u6dur_admij
+
+```{r}
+( -14.2727198)+(0.1677178*36)+(2.0238366)
+```
+
+10th observation
+
+```{r}
+data[10,]
+```
+
+```{r}
+( -14.2727198)+(0.1677178*45)+(1.1793065)+(1.4534453)+(1.0941284)+(0.2554240*3) + (2.0238366) + (-0.05447862) + (-2.2774811)
+```
+
+###### predicted probability
+
+```{r}
+pred_prob <- predict(rs_lme_dur_tx, type = 'response')
+```
+
+```{r}
+head(predict(rs_lme_dur_tx, type = 'response'), 10)
+```
+
+probability (manual) - 1st subject
+
+```{r}
+exp(-6.2110437)/(1+exp(-6.2110437))
+```
+
+##### level 2: hospital
+
+create new data
+
+```{r}
+new_data <- expand.grid(hospital = c(1:7),
+                        sex = c('female', 'male'),
+                        dm = c('yes', 'no'), 
+                        dur_adm = mean(data$dur_adm),
+                        ckd = c('yes', 'no'),
+                        treatment = c('invasive', 'noninvasive'),
+                        age = mean(data$age))
+```
+
+```{r}
+prob_site <- predict(rs_lme_dur_tx, newdata = new_data, type = 'response')
+logodds_site <- predict(rs_lme_dur_tx, newdata = new_data, type = 'link')
+cbind(new_data, logodds_site , prob_site)
+```
+
+combine fitted and predicted probabilty
+
+```{r}
+c_data <- cbind(fitted,pred_prob)
+```
+
+## Model fitness
+
+diagnostic plot
+
+```{r}
+plot(rs_lme_dur_tx, pch = 20, col = "black", lty = "dotted")
+```
+
+```{r}
+library(languageR)
+pairscor.fnc(ranef(rs_lme_dur_tx)$hospital)
+```
+
+AUROC
+
+```{r}
+library(pROC)
+roc <- roc(response = data$status, predictor = fitted(rs_lme_dur_tx))
+plot(roc)
+auc(roc)
+ci(roc)
+```
+
+```{r}
+library(caret)
+postMI <- factor(data$status, levels = c("0", "1"))
+
+fit.m <- augment(rs_lme_dur_tx, type.predict = 'response') |>
+           mutate(pred.class = factor(ifelse(.fitted > 0.5, '1', '0')))
+
+fit.m$pred.class <- factor(fit.m$pred.class, levels = levels(postMI))
+
+confusionMatrix(data = fit.m$pred.class, reference = postMI)
+
+```
+
+## Presentation
+
+### univariate analysis
+
+```{r}
+tbl_uvregression(data[c("status", "age", "sex", "dm", "ckd", "treatment", "dur_adm")], method = glm, y=status, method.args = list(family=binomial),estimate_fun = function(x) style_number(x, digits = 3), exponentiate = FALSE)
+```
+
+### random effect
+
+```{r}
+# library(sjplot)
+tab_model(rs_lme_dur_tx)
+```
+
+```{r}
+plot_model(rs_lme_dur_tx, type = 're')
+```
+
+```{r}
+# extract random effect
+re_lme_dur_tx <- ranef(rs_lme_dur_tx)
+cater_re_lme_dur_tx <- augment(re_lme_dur_tx)
+```
+
+```{r}
+ggplot(cater_re_lme_dur_tx, aes(estimate, qq, xmin = lb, xmax = ub))+
+  geom_errorbarh(height=0) +
+  geom_point() + 
+  facet_wrap(~variable,scale="free_x") +
+  geom_text(aes(label = level), hjust = 2, vjust = 1, size = 3)
+  scale_color_discrete(name = "Level")
+```
+
+```{r}
+ggplot(cater_re_lme_dur_tx, aes(x = estimate, y = qq, xmin = lb, xmax = ub, color = factor(level))) +
+  geom_point() +
+  geom_text(aes(label = level), hjust = -0.2, vjust = 0.5, size = 3) + # Adding level labels
+  facet_wrap(~variable, scales = "free_x") +
+  scale_color_discrete(name = "Level") +  # Adds a legend with the name 'Level'
+  labs(x = "Estimate", y = "QQ") +
+  theme_minimal()
+```
+
+```{r}
+lattice::dotplot(ranef(rs_lme_dur_tx, which = "hospital", condVar = TRUE))
+```
+
+```{r}
+plot_model(
+  rs_lme_dur_tx, 
+  type = "pred", 
+  terms = c("dur_adm", "hospital", "treatment"),  
+  pred.type = "re",            
+  ci.lvl = NA
+)
+```
+
+table result
+
+```{r}
+tbl_regression(rs_lme_dur_tx, estimate_fun = function(x) style_number(x, digits = 3))
+```
+
+```{r}
+tbl_regression(rs_lme_dur_tx, exp =T, estimate_fun = function(x) style_number(x, digits = 3))
+```
+
+plot predicted probabilities
+
+```{r}
+age <-plot_model(rs_lme_dur_tx, type = "pred", terms = c("age"), axis.labels = NULL)
+sex <-plot_model(rs_lme_dur_tx, type = "pred", terms = c("sex"), title = NULL)
+dm <-plot_model(rs_lme_dur_tx, type = "pred", terms = c("dm"), title = NULL)
+ckd <-plot_model(rs_lme_dur_tx, type = "pred", terms = c("ckd"), title = NULL)
+dur <-plot_model(rs_lme_dur_tx, type = "pred", terms = c("dur_adm"), title = NULL)
+tx <- plot_model(rs_lme_dur_tx, type = "pred", terms = c("treatment"), title = NULL)
+```
+
+```{r}
+age <- age + ggtitle(NULL)
+sex <- sex + ggtitle(NULL)
+dm <- dm + ggtitle(NULL)
+ckd <- ckd + ggtitle(NULL)
+dur <- dur + ggtitle(NULL)
+tx <- tx + ggtitle(NULL)
+```
+
+```{r}
+grid.arrange(age, sex, dm, ckd, dur, tx, ncol=3)
+```
+
+report
+
+```{r}
+report::report(rs_lme_dur_tx)
+```
