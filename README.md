@@ -23,5 +23,7 @@ The analysis can be reproduced by running the following files:
 - linear mixed model.qmd for the carbapenem therapy analysis.
 - logistic mixed model.qmd for the MI mortality analysis.
 
+Complementing this hands-on session is this lecture accessible at https://jomedit.my.canva.site/mixed-models.
+
 # Contact
 For any inquiries, please contact drhazlienor@hotmail.com.
