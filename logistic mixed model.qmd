@@ -61,6 +61,10 @@ The dataset consists of data from 1250 patients who experienced a myocardial inf
 
 -   **Post-MI Mortality:** Binary variable indicating the survival status of the patient at discharge (alive = 0, dead = 1).
 
+Hierarchical structure:
+
+![](images/clipboard-3392760756.png)
+
 ## Workflow
 
 1.  prepare environment
@@ -93,6 +97,11 @@ library(gee)
 library(lme4)
 library(sjPlot)
 library(gtsummary)
+library(caret)
+library(glmmTMB)
+library(pROC)
+library(broom.helpers)
+library(broom.mixed)
 ```
 
 ## Load data
@@ -119,26 +128,9 @@ summary(data)
 visualize hierarchical tree
 
 ```{r}
-library(data.tree)
-```
-
-```{r}
-root <- Node$new("Hospitals")
-```
-
-```{r}
-patient_counts <- data %>%
+data %>%
   group_by(hospital) %>%
   summarize(patient_count = n())
-```
-
-```{r}
-for(i in 1:nrow(patient_counts)) {
-  hospital_id <- patient_counts$hospital[i]
-  patient_count <- patient_counts$patient_count[i]
-  root$AddChild(paste("Hospital", hospital_id, "- Patients:", patient_count))
-}
-print(root)
 ```
 
 ## Descriptive and univariate analysis
@@ -148,14 +140,17 @@ distribution of risk factors based on post-MI mortality status and across differ
 ```{r}
 data %>% 
   select(-ID) %>% 
-  tbl_summary(by = status,
-            statistic = list(all_continuous() ~ "{mean} ({sd})"),
-            digits = age ~ c(1, 1)
-             ) %>% 
-            modify_header(update = list(stat_1 ~ "**Alive**", 
-                                        stat_2 ~ "**Dead**")) %>% 
-            add_overall() %>% 
-            add_p
+  tbl_summary(
+    by = status,
+    statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    digits = age ~ c(1, 1)
+  ) %>% 
+  modify_header(
+    stat_1 = "**Alive**", 
+    stat_2 = "**Dead**"
+  ) %>% 
+  add_overall() %>% 
+  add_p()
 ```
 
 ```{r}
@@ -172,6 +167,8 @@ ggplot(eda, aes(factor(status), y = value, fill = factor(status))) +
   theme(legend.position = "bottom") +
   ggtitle("Distribution of risk factors for post-MI mortality by Hospital")
 ```
+
+Lets visualize how **% Post-Myocardial Infarction (MI) mortality** differs **across subgroups of categorical variables**.
 
 ```{r}
 prop_sex <- data %>%
@@ -220,7 +217,7 @@ plotckd <- ggplot(prop_ckd, aes(x = ckd, y = prop_status, group = hospital, colo
   coord_cartesian(ylim = c(0, 0.6)) + 
   scale_y_continuous(breaks = seq(0, 1, by = 0.2), labels = scales::percent_format(accuracy = 1)) + 
   ylab("% Post-MI mortality") + 
-  xlab("Sex") + 
+  xlab("CKD") + 
    theme_minimal() +
   theme(legend.title = element_blank())
 ```
@@ -249,13 +246,17 @@ library(gridExtra)
 grid.arrange(plotsex, plotdm, plotckd, plottx, ncol = 2)
 ```
 
+Each **line** in each panel represents a **hospital** showing the change in **% post-MI mortality** between two levels of a independent variable.
+
+The **lines don’t all go in the same direction** or have the same slope suggests there’s **variation in how each hospital’s mortality rates differ** by sex, treatment type, or comorbidities.
+
 ## Multivariate analysis (model building)
 
 **Fixed effect and random effect**
 
 Variable included in the model building : independent variable (age, sex, dm, ckd, treatment, dur_adm), outcome variable (status)
 
-\*\* Model building and Estimation\*\*
+**Model building and Estimation**
 
 ### Binary logistic regression model
 
@@ -264,26 +265,24 @@ mlog_model <- glm(status ~ age + sex + dm + ckd + treatment + dur_adm, family = 
 summary(mlog_model)
 ```
 
-There are one possible sources of correlation between observations in the data - on the study site (hospital).
+We have estimated the effect on predictors on the post-MI status using binary logistic regression model. However, there are one possible sources of **correlation** between observations in the data - on the study site (hospital).
+
+A mixed model is justified in this analysis because the data exhibit a hierarchical structure, where patients are nested within hospitals. The plot shows variability in post-MI mortality across hospitals for different subgroups, suggesting that the effect of these predictors may not be uniform across all settings.
 
 As subjects (level 1) are clustered within hospital (level 2) it may be necessary to consider a two-level random effects model when analyzing the data.
 
+If you are interested in estimating the average effect of predictors on the outcome, you can proceed with **Generalized Estimating Equations (GEE)** - the marginal model.
+
 ### Marginal (population average) model
 
+![](images/clipboard-3525049656.png)
+
 ```{r}
-gee_model<- gee(status ~ age + sex +dm + ckd + treatment + dur_adm, id = hospital, 
+log_gee_model<- gee(status ~ age + sex +dm + ckd + treatment + dur_adm, id = hospital, 
                 data = data, family = binomial(link = 'logit'), 
                 corstr = "independence", 
                 scale.fix = TRUE, scale.value = 1,
                 maxiter = 100)
-```
-
-summary of estimates
-
-```{r}
-sum_gee_model <- data.frame(log_odds = coef(gee_model), 
-                           odds_ratio = exp(coef(gee_model)))
-sum_gee_model
 ```
 
 ### Conditional model
@@ -291,6 +290,8 @@ sum_gee_model
 #### Random intercept
 
 random intercept (hospital)
+
+![](images/clipboard-678614077.png)
 
 ```{r}
 ri_lme <- glmer(status ~ age + sex + dm + ckd + treatment + dur_adm +
@@ -303,6 +304,8 @@ summary(ri_lme)
 
 Estimating the fixed effect of the risk factors while also controlling for random effect of duration of admission (slope) and hospital (intercept)
 
+![](images/clipboard-182771819.png)
+
 ```{r}
 rs_lme_dur <- glmer(status ~ age + sex + dm + ckd + dur_adm +
                         (1 + dur_adm| hospital), family = binomial("logit"), data = data, glmerControl(calc.derivs = FALSE))
@@ -312,6 +315,8 @@ summary(rs_lme_dur)
 #### Random intercept with multiple random slope
 
 Estimating the fixed effect of the risk factors while controlling for random effect of duration of admission (slope), treatment (slope), and hospital (intercept)
+
+![](images/clipboard-421135473.png)
 
 ```{r}
 rs_lme_dur_tx <- glmer(status ~ age + sex + dm + ckd + dur_adm + treatment +
@@ -351,7 +356,7 @@ compare random intercept with single slope to random intercept with multiple slo
 anova(rs_lme_dur, rs_lme_dur_tx, test = 'Chisq')
 ```
 
-The AIC of random intercept with multiple random slope model was significantly smaller than other random effect model, hence it is selected as the preliminary final model.
+The AIC of **random intercept with multiple random slope** model was significantly smaller than other random effect model, hence it is selected as the preliminary final model.
 
 #### Estimate
 
@@ -367,17 +372,23 @@ summary(rs_lme_dur_tx)
 
 ##### log odds
 
+lets provide the 95% CI for the log odds estimated
+
 ```{r}
 tidy(rs_lme_dur_tx, conf.int=T)
 ```
 
 ##### odds ratio
 
+lets provide the 95% CI for the odds ratio estimated
+
 ```{r}
 tidy(rs_lme_dur_tx, exponentiate=T, conf.int=T)
 ```
 
 ##### random effects
+
+lets extract the random effect along with the 95% CI
 
 ```{r}
 tidy(rs_lme_dur_tx, effects = 'ran_vals',
@@ -386,109 +397,34 @@ tidy(rs_lme_dur_tx, effects = 'ran_vals',
 
 #### Prediction
 
-##### level 1: subject
-
-```{r}
-fitted <- augment(rs_lme_dur_tx)
-augment(rs_lme_dur_tx) %>%
-  slice(1:30) %>%
-  kbl() %>%
-  kable_styling()
-```
-
-###### predicted log odds
-
-```{r}
-head(predict(rs_lme_dur_tx, type = 'link'), 10)
-```
-
-log odd (manual) for first observation
-
-```{r}
-data[1,]
-```
-
-fixed effect
-
-```{r}
-fixef(rs_lme_dur_tx)
-```
-
-random effect
-
-```{r}
-head(ranef(rs_lme_dur_tx), 3)
-```
-
-logit(P(Y_ij =1))=β0+β1Ageij +β2Genderij +β3DMij +β4CKDij +β5 treatmentij+β6dur_admij +u0j + u5treatmentij + u6dur_admij
-
-```{r}
-( -14.2727198)+(0.1677178*36)+(2.0238366)
-```
-
-10th observation
-
-```{r}
-data[10,]
-```
-
-```{r}
-( -14.2727198)+(0.1677178*45)+(1.1793065)+(1.4534453)+(1.0941284)+(0.2554240*3) + (2.0238366) + (-0.05447862) + (-2.2774811)
-```
-
-###### predicted probability
-
-```{r}
-pred_prob <- predict(rs_lme_dur_tx, type = 'response')
-```
+predict the probability of being dead following MI for the first 10 observation (value between 0 - 1)
 
 ```{r}
 head(predict(rs_lme_dur_tx, type = 'response'), 10)
 ```
 
-probability (manual) - 1st subject
+predict the log odds for the first 10 observation
 
 ```{r}
-exp(-6.2110437)/(1+exp(-6.2110437))
-```
-
-##### level 2: hospital
-
-create new data
-
-```{r}
-new_data <- expand.grid(hospital = c(1:7),
-                        sex = c('female', 'male'),
-                        dm = c('yes', 'no'), 
-                        dur_adm = mean(data$dur_adm),
-                        ckd = c('yes', 'no'),
-                        treatment = c('invasive', 'noninvasive'),
-                        age = mean(data$age))
-```
-
-```{r}
-prob_site <- predict(rs_lme_dur_tx, newdata = new_data, type = 'response')
-logodds_site <- predict(rs_lme_dur_tx, newdata = new_data, type = 'link')
-cbind(new_data, logodds_site , prob_site)
-```
-
-combine fitted and predicted probabilty
-
-```{r}
-c_data <- cbind(fitted,pred_prob)
+head(predict(rs_lme_dur_tx, type = 'link'), 10)
 ```
 
 ## Model fitness
 
-diagnostic plot
+diagnostic residual plot
 
 ```{r}
 plot(rs_lme_dur_tx, pch = 20, col = "black", lty = "dotted")
 ```
 
+normality of residuals
+
 ```{r}
-library(languageR)
-pairscor.fnc(ranef(rs_lme_dur_tx)$hospital)
+qqnorm(residuals(rs_lme_dur_tx))
+```
+
+```{r}
+plot_model(rs_lme_dur_tx, type = 'diag')
 ```
 
 AUROC
@@ -514,6 +450,9 @@ confusionMatrix(data = fit.m$pred.class, reference = postMI)
 
 ```
 
+The model demonstrates strong predictive performance with an **accuracy** of 86.2% (95% CI: 84.2%, 88.0%), **sensitivity** of 93.8% and **specificity** of 66.4%. The area under the receiver operating
+characteristic curve (AUROC) of 0.90 (95% CI: 0.88, 0.92) suggests excellent discriminative ability.
+
 ## Presentation
 
 ### univariate analysis
@@ -527,10 +466,6 @@ tbl_uvregression(data[c("status", "age", "sex", "dm", "ckd", "treatment", "dur_a
 ```{r}
 # library(sjplot)
 tab_model(rs_lme_dur_tx)
-```
-
-```{r}
-plot_model(rs_lme_dur_tx, type = 're')
 ```
 
 ```{r}
@@ -549,18 +484,10 @@ ggplot(cater_re_lme_dur_tx, aes(estimate, qq, xmin = lb, xmax = ub))+
 ```
 
 ```{r}
-ggplot(cater_re_lme_dur_tx, aes(x = estimate, y = qq, xmin = lb, xmax = ub, color = factor(level))) +
-  geom_point() +
-  geom_text(aes(label = level), hjust = -0.2, vjust = 0.5, size = 3) + # Adding level labels
-  facet_wrap(~variable, scales = "free_x") +
-  scale_color_discrete(name = "Level") +  # Adds a legend with the name 'Level'
-  labs(x = "Estimate", y = "QQ") +
-  theme_minimal()
-```
-
-```{r}
 lattice::dotplot(ranef(rs_lme_dur_tx, which = "hospital", condVar = TRUE))
 ```
+
+plot the predicted probabilities
 
 ```{r}
 plot_model(
@@ -573,10 +500,6 @@ plot_model(
 ```
 
 table result
-
-```{r}
-tbl_regression(rs_lme_dur_tx, estimate_fun = function(x) style_number(x, digits = 3))
-```
 
 ```{r}
 tbl_regression(rs_lme_dur_tx, exp =T, estimate_fun = function(x) style_number(x, digits = 3))
@@ -593,6 +516,8 @@ dur <-plot_model(rs_lme_dur_tx, type = "pred", terms = c("dur_adm"), title = NUL
 tx <- plot_model(rs_lme_dur_tx, type = "pred", terms = c("treatment"), title = NULL)
 ```
 
+add some title
+
 ```{r}
 age <- age + ggtitle(NULL)
 sex <- sex + ggtitle(NULL)
@@ -602,12 +527,48 @@ dur <- dur + ggtitle(NULL)
 tx <- tx + ggtitle(NULL)
 ```
 
+arrange in one plot
+
 ```{r}
 grid.arrange(age, sex, dm, ckd, dur, tx, ncol=3)
 ```
 
-report
+### Interpretation
 
-```{r}
-report::report(rs_lme_dur_tx)
-```
+We fitted a logistic mixed effect model (estimated using ML and Nelder-Mead optimizer) to predict post-MI mortality with age, sex, underlying diabetes mellitus, chronic kidney disease, type of treatment, and duration of admission. The model included duration of admission, type of treatment, and admitted hospital as random effect. The model's total explanatory power is substantial (conditional R2 =0.67) and the part related to the fixed effects alone (marginal R2) is of 0.56.
+
+***Fixed effect interpretation***
+
+For each year increase in age, the odds of post-MI mortality increase by 1.18 (95% CI: 1.15, 1.21, p-value \<0.001), when adjusted for sex, underlying diabetes mellitus, chronic kidney disease, duration of admission, treatment type, and random effect of hospital, treatment type and duration of admission.
+
+Being male is associated with a 3.25 (95% CI: 2.16, 4.91, p-value \<0.001) increase in the odds of post-MI mortality compared to being female), when adjusted for age, underlying diabetes mellitus, chronic kidney disease, duration of admission, treatment type, and random effect of hospital, treatment type and duration of admission.
+
+Having diabetes mellitus is associated with a 2.99 (95% CI: 2.03, 4.39, p-value \<0.001) increase in the odds of post-MI mortality compared to not having diabetes mellitus, when adjusted for age, sex, chronic kidney disease, duration of admission, treatment type, and random effect of hospital, treatment type and duration of admission.
+
+Having chronic kidney disease is associated with a 3.38 (95% CI: 2.33, 4.91, p-value \<0.001) increase in the odds of post-MI mortality compared to not having chronic kidney disease, when adjusted for age, sex, underlying diabetes mellitus, duration of admission, treatment type, and random effect of hospital, treatment type and duration of admission.
+
+Receiving non-invasive treatment for myocardial infarction is associated with a 4.28 (95% CI: 0.40, 46.37, p-value = 0.023) increase in the odds of post-MI mortality compared to receiving invasive treatment, when adjusted for age, sex, underlying diabetes mellitus, chronic kidney disease, duration of admission, and random effect of hospital, treatment type and duration of admission.
+
+For each day increase in duration of admission, the odds of post-MI mortality increase by 1.29 (95% CI: 1.17. 1.43, p-value \<0.001), when adjusted for age, sex, underlying diabetes mellitus, chronic kidney disease, treatment type, and random effect of hospital, treatment type and duration of admission.
+
+***Random effect interpretation***
+
+There was substantial variation in baseline post-MI mortality across hospitals (variance = 4.60, SD = 2.15), even after adjusting for patient-level factors.
+
+The effect of admission duration on mortality varied slightly between hospitals (variance = 0.013, SD = 0.12), while the effect of treatment type (invasive vs. non-invasive) showed larger differences across hospitals (variance = 5.89, SD = 2.43).
+
+There was a moderate negative correlation between hospital baseline mortality and the effect of admission duration (-0.44), and a strong negative correlation with the effect of treatment (-1.00), suggesting that hospitals with higher baseline mortality showed smaller effects of duration and greater variation in treatment outcomes.
+
+Hospitals with cardiac specialists (4-7) generally show higher intercept estimates, indicating a higher baseline effect, given that these hospitals often manage more severe cases. The effect of non-invasive treatment varies significantly among hospitals that may hinted at different standard of protocol.  Hospitals lacking cardiac specialists and opting for non-invasive treatments show higher mortality rates with longer admission durations among post-MI patients.
+
+References
+
+-   <https://stats.oarc.ucla.edu/r/dae/mixed-effects-logistic-regression/>
+
+-   <https://sscc.wisc.edu/sscc/pubs/MM/MM_DiagInfer.html>
+
+-   <https://bookdown.org/animestina/phd_july_19/now-for-advanced-logistic-mixed-effects.html>
+
+-   Silveira LTYD, Ferreira JC, Patino CM. Mixed-effects model: a useful statistical tool for longitudinal and cluster studies. J Bras Pneumol. 2023 May 15;49(2):e20230137. doi: 10.36416/1806-3756/e20230137.
+
+-   Twisk, J.W., 2019. **Applied mixed model analysis: a practical guide**. Cambridge University Press
