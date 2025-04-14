@@ -81,7 +81,7 @@ Key outcome variables include:
 
 4.  Descriptive analysis
 
-5.  Univariate analysis
+5.  Univariable analysis
 
 6.  Multilevel analysis
 

@@ -75,7 +75,7 @@ Hierarchical structure:
 
 4.  descriptive analysis
 
-5.  univariate analysis
+5.  univariable analysis
 
 6.  multilevel analysis
 
