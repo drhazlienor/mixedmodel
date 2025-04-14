@@ -93,7 +93,7 @@ Install package
 (remove the # when you want to run this code)
 
 ```{r}
-#install.packages(setdiff(c("tidyverse", "readxl", "broom.mixed", "gee", "lme4", "sjPlot", "gtsummary", "caret", "glmmTMB","pROC", "broom.helpers"),  rownames(installed.packages())), dependencies = TRUE)
+#install.packages(setdiff(c("tidyverse", "readxl", "broom.mixed", "gee", "lme4", "sjPlot", "gtsummary", "caret", "glmmTMB","pROC", "broom.helpers"),  rownames(installed.packages())))
 
 ```
 

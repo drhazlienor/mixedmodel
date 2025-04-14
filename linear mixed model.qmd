@@ -102,7 +102,7 @@ Key outcome variables include:
 (remove the \# when you want to run this code)
 
 ```{r}
-#install.packages(setdiff(c("readxl", "tidyverse", "lme4", "lmerTest", "gtsummary", "sjPlot", "lattice", "DHARMa", "broom.helpers", "glmmTMB"),  rownames(installed.packages())), dependencies = TRUE)
+#install.packages(setdiff(c("readxl", "tidyverse", "lme4", "lmerTest", "gtsummary", "sjPlot", "lattice", "DHARMa", "broom.helpers", "glmmTMB"),  rownames(installed.packages())))
  
 ```
 
