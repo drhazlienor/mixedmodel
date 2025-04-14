@@ -102,7 +102,8 @@ Key outcome variables include:
 (remove the \# when you want to run this code)
 
 ```{r}
-# install.packages(c("readxl", "tidyverse", "lme4", "lmerTest", "gtsummary", "sjPlot", "lattice", "DHARMa"), dependencies = TRUE)
+#install.packages(setdiff(c("readxl", "tidyverse", "lme4", "lmerTest", "gtsummary", "sjPlot", "lattice", "DHARMa", "broom.helpers", "glmmTMB"),  rownames(installed.packages())), dependencies = TRUE)
+ 
 ```
 
 **Load required packages**
@@ -114,9 +115,11 @@ library(lme4) # fitting linear mixed-effects models
 library(lmerTest) # providing p-values for fixed effects
 library(gtsummary) # summarizing model results
 library(broom.mixed) #tidy, summarize mixed models
+library(broom.helpers)
 library(sjPlot) # visualizing and summarizing mixed-effects model results
 library(lattice) # visualizing mixed-effects model results
 library(DHARMa) # checking residual diagnostics for hierarchical regression models
+library(glmmTMB)
 ```
 
 ## Load Data

@@ -89,6 +89,16 @@ Hierarchical structure:
 
 ## Prepare environment
 
+Install package
+(remove the # when you want to run this code)
+
+```{r}
+#install.packages(setdiff(c("tidyverse", "readxl", "broom.mixed", "gee", "lme4", "sjPlot", "gtsummary", "caret", "glmmTMB","pROC", "broom.helpers"),  rownames(installed.packages())), dependencies = TRUE)
+
+```
+
+Load library
+
 ```{r}
 library(tidyverse)
 library(readxl)
@@ -450,8 +460,7 @@ confusionMatrix(data = fit.m$pred.class, reference = postMI)
 
 ```
 
-The model demonstrates strong predictive performance with an **accuracy** of 86.2% (95% CI: 84.2%, 88.0%), **sensitivity** of 93.8% and **specificity** of 66.4%. The area under the receiver operating
-characteristic curve (AUROC) of 0.90 (95% CI: 0.88, 0.92) suggests excellent discriminative ability.
+The model demonstrates strong predictive performance with an **accuracy** of 86.2% (95% CI: 84.2%, 88.0%), **sensitivity** of 93.8% and **specificity** of 66.4%. The area under the receiver operating characteristic curve (AUROC) of 0.90 (95% CI: 0.88, 0.92) suggests excellent discriminative ability.
 
 ## Presentation
 
